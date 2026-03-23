@@ -1,103 +1,84 @@
 (function () {
-  const V = "V23-Pro-Native";
+  const V = "V30-Deep-Diver-Keep-Space";
   console.log(
-    `%c[${V}] Logic Loaded (No-Flicker Mode)`,
+    `%c[${V}] Initializing Selection Hook...`,
     "color: #00ffff; font-weight: bold;",
   );
 
-  const getDeepSelection = (target) => {
-    const root = target ? target.getRootNode() : document;
-    return (root instanceof ShadowRoot || root === document) &&
-      root.getSelection
-      ? root.getSelection()
-      : window.getSelection();
-  };
-
-  const handleSelection = (e) => {
-    // detail === 2 indicates a double-click
-    if (e.detail !== 2) return;
-
-    const leafTarget = e.composedPath()[0];
-    const sel = getDeepSelection(leafTarget);
-
-    // We run this synchronously.
-    // By mouseup of the second click, Chromium has already calculated the range.
-    const text = sel.toString();
-
-    // Check for trailing whitespace (standard space, non-breaking space, or newline)
-    if (text.length > 1 && /\s$/.test(text)) {
-      try {
-        // 'extend' moves the focus (the moving end)
-        // 'backward' by one 'character'
-        sel.modify("extend", "backward", "character");
-      } catch (err) {
-        // Fallback for environments where modify() might fail
-        const range = sel.getRangeAt(0);
-        range.setEnd(range.endContainer, range.endOffset - 1);
-        sel.removeAllRanges();
-        sel.addRange(range);
+  const getSelectionFromEvent = (e) => {
+    const path = e.composedPath();
+    for (let node of path) {
+      if (node instanceof ShadowRoot) {
+        return node.getSelection ? node.getSelection() : null;
       }
     }
+    return window.getSelection();
   };
 
-  // Use capture: true to ensure we catch it before other listeners
-  window.addEventListener("mouseup", handleSelection, true);
-})();
-(function () {
-  const V = "V23-Pro-Native";
-  let isDoubleSelection = false;
+  const attemptTrim = (sel) => {
+    if (!sel || sel.rangeCount === 0) return false;
 
-  const getDeepSelection = (target) => {
-    const root = target ? target.getRootNode() : document;
-    return (root instanceof ShadowRoot || root === document) &&
-      root.getSelection
-      ? root.getSelection()
-      : window.getSelection();
-  };
+    const range = sel.getRangeAt(0);
+    const content = range.cloneContents();
+    const text = range.toString() || content.textContent || "";
 
-  const trimTrailingSpace = () => {
-    // Find the active element to handle Anki's Shadow DOM (Editor)
-    const sel = getDeepSelection(document.activeElement);
-    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
-
-    const text = sel.toString();
-    // Check for any trailing whitespace (space, nbsp, etc.)
-    if (text.length > 1 && /\s$/.test(text)) {
-      // sel.modify is usually flicker-free if called inside selectionchange
-      sel.modify("extend", "backward", "character");
+    // 1. If selection is ONLY whitespace, it's VALID. Exit here.
+    if (text.length > 0 && /^[\s\u00A0]+$/.test(text)) {
+      return true;
     }
+
+    // 2. If it's a word with a trailing space, trim the space.
+    if (text.length > 1 && /[\s\u00A0]$/.test(text)) {
+      try {
+        sel.modify("extend", "backward", "character");
+        console.log(
+          `%c[${V}] Trimmed trailing space from word.`,
+          "color: #00ff00;",
+        );
+        return true;
+      } catch (err) {
+        console.error(`%c[${V}] Modify failed:`, err);
+      }
+    }
+    return false;
   };
 
-  // 1. Detect when a double-click starts
-  document.addEventListener(
+  window.addEventListener(
     "mousedown",
     (e) => {
-      if (e.detail === 2) {
-        isDoubleSelection = true;
-      } else {
-        isDoubleSelection = false;
+      if (e.detail >= 2) {
+        const sel = getSelectionFromEvent(e);
+        const tasks = [0, 10, 50, 100];
+        tasks.forEach((delay) => {
+          setTimeout(() => attemptTrim(sel), delay);
+        });
       }
     },
     true,
   );
 
-  // 2. Intercept the selection calculation BEFORE paint
-  document.addEventListener("selectionchange", () => {
-    if (isDoubleSelection) {
-      // We use a Promise microtask to run immediately after the browser
-      // updates the selection but before the next animation frame (paint).
-      Promise.resolve().then(trimTrailingSpace);
-      isDoubleSelection = false; // Only run once per double-click
-    }
-  });
+  document.addEventListener(
+    "selectionchange",
+    (e) => {
+      const active = document.activeElement;
+      if (active && active.tagName.includes("ANKI-EDITABLE")) {
+        const sel = active.shadowRoot ? active.shadowRoot.getSelection() : null;
+        if (sel && !sel.isCollapsed) {
+          const text = sel.toString();
 
-  // 3. Cleanup logic
-  document.addEventListener("mouseup", () => {
-    isDoubleSelection = false;
-  });
+          // Same logic: If it's just a space, leave it alone.
+          const isPureSpace = /^[\s\u00A0]+$/.test(text);
+          if (!isPureSpace && text.length > 1 && /[\s\u00A0]$/.test(text)) {
+            sel.modify("extend", "backward", "character");
+          }
+        }
+      }
+    },
+    true,
+  );
 
   console.log(
-    `%c[${V}] Native Selection Logic Loaded.`,
-    "color: #00ffff; font-weight: bold;",
+    `%c[${V}] Hooked into anki-editable components.`,
+    "color: #00ff00;",
   );
 })();
